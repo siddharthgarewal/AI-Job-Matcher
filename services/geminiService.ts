@@ -4,6 +4,10 @@ import { ResumeData, Job, MatchResult, JobPreferences, GroundingSource } from ".
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+/**
+ * Parses resume data from a base64 encoded file using Gemini 3 Pro.
+ * Optimized for diverse layouts (multi-column, headers/footers) and unstructured text.
+ */
 export const parseResume = async (fileData: { data: string, mimeType: string }): Promise<ResumeData> => {
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
@@ -13,22 +17,48 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
           inlineData: fileData
         },
         {
-          text: "Parse this resume and return the details in a structured JSON format. Ensure all skills, experience, education, and contact info are captured accurately."
+          text: `
+            Analyze this resume with high precision. 
+            
+            Instructions:
+            1. Handle diverse layouts: Accurately extract data even if it uses multiple columns, tables, or non-traditional formatting.
+            2. Synthesize missing data: If a professional summary is not explicitly provided, synthesize a compelling 2-3 sentence summary based on the candidate's career trajectory.
+            3. Skills Extraction: Identify both hard (technical) and soft (interpersonal) skills even if they are embedded in experience descriptions rather than a dedicated list.
+            4. Work History: Ensure dates are captured accurately. If a job is 'Current' or 'Present', mark it as such.
+            5. Contact Info: Locate email, phone, and name regardless of where they appear on the page.
+            
+            Return the details in a strictly structured JSON format.
+          `
         }
       ]
     },
     config: {
+      // Use thinking budget to handle complex document reasoning and layout understanding.
+      thinkingConfig: { thinkingBudget: 4096 },
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          fullName: { type: Type.STRING },
-          email: { type: Type.STRING },
-          phone: { type: Type.STRING },
-          summary: { type: Type.STRING },
+          fullName: { 
+            type: Type.STRING,
+            description: "The candidate's full legal name."
+          },
+          email: { 
+            type: Type.STRING,
+            description: "Primary contact email address."
+          },
+          phone: { 
+            type: Type.STRING,
+            description: "Primary contact phone number."
+          },
+          summary: { 
+            type: Type.STRING,
+            description: "A professional summary or synthesized profile of the candidate."
+          },
           skills: {
             type: Type.ARRAY,
-            items: { type: Type.STRING }
+            items: { type: Type.STRING },
+            description: "A comprehensive list of technical, professional, and soft skills."
           },
           experience: {
             type: Type.ARRAY,
@@ -41,7 +71,8 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
                 description: { type: Type.STRING }
               },
               required: ["title", "company", "period", "description"]
-            }
+            },
+            description: "Chronological list of work experience."
           },
           education: {
             type: Type.ARRAY,
@@ -53,7 +84,8 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
                 year: { type: Type.STRING }
               },
               required: ["degree", "institution", "year"]
-            }
+            },
+            description: "Educational background and degrees earned."
           }
         },
         required: ["fullName", "skills", "experience"]
@@ -62,12 +94,18 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
   });
 
   try {
-    return JSON.parse(response.text || '{}');
+    const text = response.text;
+    if (!text) throw new Error("Empty response from AI model.");
+    return JSON.parse(text);
   } catch (e) {
-    throw new Error("Failed to parse resume JSON response from AI.");
+    console.error("Resume Parsing Error:", e);
+    throw new Error("We had trouble accurately parsing your resume. Please ensure the file is clear and try again.");
   }
 };
 
+/**
+ * Searches for real-time job openings using Google Search grounding.
+ */
 export const findRealJobs = async (resume: ResumeData, preferences: JobPreferences): Promise<{ jobs: Job[], matches: MatchResult[] }> => {
   const dateMap = {
     '24h': 'past 24 hours',

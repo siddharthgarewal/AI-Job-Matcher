@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import Header from './components/Header';
 import ResumeUploader from './components/ResumeUploader';
 import JobMatchCard from './components/JobMatchCard';
@@ -13,10 +13,15 @@ const App: React.FC = () => {
   const [matchResults, setMatchResults] = useState<MatchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   
-  // Preference States
+  // Preference States (Search Params)
   const [location, setLocation] = useState('');
   const [includeRemote, setIncludeRemote] = useState(true);
   const [postedWithin, setPostedWithin] = useState<PostingDateFilter>('7d');
+
+  // Local Filter States (Result Refinement)
+  const [filterTitle, setFilterTitle] = useState('');
+  const [filterCompany, setFilterCompany] = useState('');
+  const [filterMinSalary, setFilterMinSalary] = useState<number | ''>('');
 
   // Extract processing states
   const isIdle = appState === AppState.IDLE;
@@ -52,12 +57,34 @@ const App: React.FC = () => {
     }
   }, [location, includeRemote, postedWithin]);
 
+  // Computed: Filtered Jobs
+  const filteredJobs = useMemo(() => {
+    return currentJobs.filter(job => {
+      const matchesTitle = job.title.toLowerCase().includes(filterTitle.toLowerCase());
+      const matchesCompany = job.company.toLowerCase().includes(filterCompany.toLowerCase());
+      
+      let matchesSalary = true;
+      if (filterMinSalary !== '') {
+        const salaryNumbers = job.salaryRange.match(/\d+/g);
+        if (salaryNumbers && salaryNumbers.length > 0) {
+          const minJobSalary = parseInt(salaryNumbers[0]);
+          matchesSalary = minJobSalary >= filterMinSalary;
+        }
+      }
+      
+      return matchesTitle && matchesCompany && matchesSalary;
+    });
+  }, [currentJobs, filterTitle, filterCompany, filterMinSalary]);
+
   const reset = () => {
     setAppState(AppState.IDLE);
     setResumeData(null);
     setCurrentJobs([]);
     setMatchResults([]);
     setError(null);
+    setFilterTitle('');
+    setFilterCompany('');
+    setFilterMinSalary('');
   };
 
   return (
@@ -79,7 +106,6 @@ const App: React.FC = () => {
               We use Gemini's Google Search capabilities to find actual job postings live from <strong>LinkedIn, Naukri, Indeed, Glassdoor,</strong> and thousands of <strong>Company Career Pages</strong>.
             </p>
 
-            {/* Preferences Section */}
             <div className="max-w-3xl mx-auto mb-10 bg-white border border-slate-200 p-6 rounded-2xl shadow-sm">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
                 <div className="text-left">
@@ -181,118 +207,202 @@ const App: React.FC = () => {
         {/* Results View */}
         {isResult && resumeData && (
           <div className="animate-in fade-in duration-500">
-            {/* Candidate Header */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-8 mb-12 shadow-sm flex flex-col md:flex-row items-center justify-between gap-8">
-              <div className="flex items-center gap-6 text-center md:text-left">
-                <div className="w-20 h-20 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black shadow-lg shadow-indigo-200">
-                  {resumeData.fullName.charAt(0)}
-                </div>
-                <div>
-                  <h2 className="text-3xl font-black text-slate-900">{resumeData.fullName}</h2>
-                  <p className="text-indigo-600 font-medium text-lg">{resumeData.experience[0]?.title || 'Professional Candidate'}</p>
-                  <div className="flex flex-wrap gap-4 mt-2 justify-center md:justify-start">
-                    <span className="text-sm text-slate-500 flex items-center gap-1.5">
-                      <i className="fa-solid fa-envelope"></i> {resumeData.email}
-                    </span>
-                    <span className="text-sm text-slate-500 flex items-center gap-1.5">
-                      <i className="fa-solid fa-phone"></i> {resumeData.phone}
-                    </span>
+            {/* Candidate Professional Dashboard Header */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-8 mb-12 shadow-sm">
+              <div className="flex flex-col lg:flex-row items-start justify-between gap-8 mb-8 border-b border-slate-100 pb-8">
+                <div className="flex items-center gap-6">
+                  <div className="w-20 h-20 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black shadow-lg shadow-indigo-200 flex-shrink-0">
+                    {resumeData.fullName.charAt(0)}
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-black text-slate-900">{resumeData.fullName}</h2>
+                    <p className="text-indigo-600 font-semibold text-lg">{resumeData.experience[0]?.title || 'Professional Candidate'}</p>
+                    <div className="flex flex-wrap gap-4 mt-3">
+                      <span className="text-sm text-slate-500 flex items-center gap-1.5 px-3 py-1 bg-slate-50 rounded-full border border-slate-100">
+                        <i className="fa-solid fa-envelope text-indigo-400"></i> {resumeData.email}
+                      </span>
+                      <span className="text-sm text-slate-500 flex items-center gap-1.5 px-3 py-1 bg-slate-50 rounded-full border border-slate-100">
+                        <i className="fa-solid fa-phone text-indigo-400"></i> {resumeData.phone}
+                      </span>
+                    </div>
                   </div>
                 </div>
+                <button 
+                  onClick={reset}
+                  className="px-6 py-2.5 bg-slate-900 text-white font-bold rounded-xl transition-all shadow-md hover:bg-slate-800 active:scale-95 whitespace-nowrap"
+                >
+                  New Analysis
+                </button>
               </div>
-              <button 
-                onClick={reset}
-                className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-all whitespace-nowrap"
-              >
-                Start New Search
-              </button>
-            </div>
 
-            {/* Layout Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
-              {/* Profile Sidebar */}
-              <div className="lg:col-span-1 flex flex-col gap-8">
-                <section>
-                  <div className="flex items-center justify-between mb-4">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Skills Extracted</h4>
-                    <i className="fa-solid fa-brain text-indigo-400 text-xs"></i>
+              {/* Profile Summary Section */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+                <div className="lg:col-span-8">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                    <i className="fa-solid fa-user-tie text-indigo-600"></i> Professional Summary
+                  </h4>
+                  <p className="text-slate-600 leading-relaxed text-lg mb-8 bg-indigo-50/30 p-5 rounded-2xl border border-indigo-50/50">
+                    {resumeData.summary || "Focused professional with a demonstrated history of excellence in the field. Committed to continuous learning and delivering high-quality results in dynamic environments."}
+                  </p>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Detailed Experience */}
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <i className="fa-solid fa-briefcase text-indigo-600"></i> Experience History
+                      </h4>
+                      <div className="space-y-6">
+                        {resumeData.experience.map((exp, i) => (
+                          <div key={i} className="group border-l-2 border-indigo-100 pl-4 py-1 hover:border-indigo-400 transition-colors">
+                            <h5 className="font-bold text-slate-900 text-sm group-hover:text-indigo-600 transition-colors">{exp.title}</h5>
+                            <p className="text-xs font-semibold text-indigo-600 mb-2">{exp.company} • {exp.period}</p>
+                            <p className="text-xs text-slate-500 leading-relaxed line-clamp-3">{exp.description}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Education History */}
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <i className="fa-solid fa-graduation-cap text-indigo-600"></i> Education
+                      </h4>
+                      <div className="space-y-6">
+                        {resumeData.education.map((edu, i) => (
+                          <div key={i} className="flex gap-4 items-start bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                            <div className="bg-white p-2.5 rounded-lg border border-slate-100 text-indigo-600 shadow-sm">
+                              <i className="fa-solid fa-certificate"></i>
+                            </div>
+                            <div>
+                              <h5 className="font-bold text-slate-900 text-sm">{edu.degree}</h5>
+                              <p className="text-xs text-slate-500">{edu.institution}</p>
+                              <p className="text-[10px] font-bold text-indigo-400 mt-1">{edu.year}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                </div>
+
+                <div className="lg:col-span-4 bg-slate-50 rounded-2xl p-6 border border-slate-100 h-fit">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Core Competencies</h4>
+                  <div className="flex flex-wrap gap-2 mb-8">
                     {resumeData.skills.map((skill, i) => (
-                      <span key={i} className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 shadow-sm">
+                      <span key={i} className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 shadow-sm hover:border-indigo-300 transition-colors">
                         {skill}
                       </span>
                     ))}
                   </div>
-                </section>
 
-                <section>
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Career Background</h4>
-                  <div className="space-y-4">
-                    {resumeData.experience.slice(0, 3).map((exp, i) => (
-                      <div key={i} className="relative pl-6 before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:bg-indigo-100">
-                        <h5 className="font-bold text-slate-900 text-sm">{exp.title}</h5>
-                        <p className="text-xs text-indigo-600 mb-1">{exp.company} • {exp.period}</p>
-                        <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">{exp.description}</p>
+                  <div className="pt-6 border-t border-slate-200">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">AI Search Context</h4>
+                    <div className="text-[11px] text-slate-600 space-y-2.5">
+                      <div className="flex justify-between">
+                        <span className="font-medium">Target Portals:</span>
+                        <span className="font-bold text-indigo-600">LinkedIn, Indeed, Glassdoor</span>
                       </div>
-                    ))}
-                  </div>
-                </section>
-                
-                <section className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl">
-                  <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest mb-2">Search Logic</h4>
-                  <div className="text-xs text-indigo-700 space-y-2 mb-3">
-                    <p>Search scope: <strong>Global (All Portals)</strong></p>
-                    <p>Location: <strong>{location || 'Global'}</strong></p>
-                    <p>Posted within: <strong>{postedWithin === 'any' ? 'Any time' : postedWithin === '24h' ? 'Last 24 hours' : `Last ${postedWithin.replace('d', '')} days`}</strong></p>
-                  </div>
-                  <div className="flex items-center gap-2 text-[10px] text-indigo-400 font-bold">
-                    <i className="fa-solid fa-circle-check"></i> MULTI-PORTAL GROUNDING
-                  </div>
-                </section>
-              </div>
-
-              {/* Matches Main Column */}
-              <div className="lg:col-span-2">
-                <div className="flex items-center justify-between mb-8">
-                  <h3 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
-                    Live Job Openings
-                    <span className="bg-indigo-100 text-indigo-600 text-sm px-2.5 py-0.5 rounded-full">{currentJobs.length} Results</span>
-                  </h3>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-slate-400 italic">Sorted by AI Relevance</span>
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  {currentJobs.map((job) => {
-                    const match = matchResults.find(m => m.jobId === job.id);
-                    if (!match) return null;
-                    return <JobMatchCard key={job.id} job={job} match={match} />;
-                  })}
-
-                  {currentJobs.length === 0 && (
-                    <div className="text-center py-20 bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl">
-                      <i className="fa-solid fa-search-minus text-4xl text-slate-300 mb-4"></i>
-                      <p className="text-slate-500">No active job listings found for your criteria.</p>
-                      <button onClick={reset} className="mt-4 text-indigo-600 font-bold">Adjust search settings</button>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Preferred Geo:</span>
+                        <span className="font-bold text-indigo-600">{location || 'Global Search'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Posting Age:</span>
+                        <span className="font-bold text-indigo-600">{postedWithin === 'any' ? 'Any time' : `Last ${postedWithin.replace('d', '')} days`}</span>
+                      </div>
                     </div>
-                  )}
-                </div>
-
-                <div className="mt-12 text-center">
-                  <p className="text-slate-400 text-sm">
-                    Verified matches found using Google Search Grounding across all major job boards.
-                  </p>
+                  </div>
                 </div>
               </div>
+            </div>
+
+            {/* Results Filters & Matches Section */}
+            <div className="flex items-center justify-between mb-8">
+              <h3 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+                Top Career Opportunities
+                <span className="bg-indigo-600 text-white text-xs px-2.5 py-1 rounded-full font-bold shadow-md shadow-indigo-100">{filteredJobs.length} Live Matches</span>
+              </h3>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-6 mb-10 shadow-sm flex flex-wrap items-center gap-6">
+              <div className="flex-grow min-w-[200px]">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Refine Job Title</label>
+                <div className="relative">
+                  <i className="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+                  <input
+                    type="text"
+                    placeholder="Search titles..."
+                    value={filterTitle}
+                    onChange={(e) => setFilterTitle(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 transition-all outline-none text-slate-800"
+                  />
+                </div>
+              </div>
+              <div className="flex-grow min-w-[200px]">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Company Name</label>
+                <div className="relative">
+                  <i className="fa-solid fa-building absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+                  <input
+                    type="text"
+                    placeholder="Search companies..."
+                    value={filterCompany}
+                    onChange={(e) => setFilterCompany(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 transition-all outline-none text-slate-800"
+                  />
+                </div>
+              </div>
+              <div className="min-w-[150px]">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Min Salary (k)</label>
+                <div className="relative">
+                  <i className="fa-solid fa-dollar-sign absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+                  <input
+                    type="number"
+                    placeholder="e.g. 150"
+                    value={filterMinSalary}
+                    onChange={(e) => setFilterMinSalary(e.target.value ? parseInt(e.target.value) : '')}
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 transition-all outline-none text-slate-800"
+                  />
+                </div>
+              </div>
+              <div className="flex items-end h-full">
+                <button 
+                  onClick={() => { setFilterTitle(''); setFilterCompany(''); setFilterMinSalary(''); }}
+                  className="px-4 py-2 text-xs font-bold text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              {filteredJobs.map((job) => {
+                const match = matchResults.find(m => m.jobId === job.id);
+                if (!match) return null;
+                return <JobMatchCard key={job.id} job={job} match={match} />;
+              })}
+
+              {filteredJobs.length === 0 && (
+                <div className="text-center py-24 bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl">
+                  <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300">
+                    <i className="fa-solid fa-search text-3xl"></i>
+                  </div>
+                  <h4 className="text-xl font-bold text-slate-900 mb-2">No matching jobs found</h4>
+                  <p className="text-slate-500 max-w-sm mx-auto mb-8">Try adjusting your filters or refine your initial search preferences.</p>
+                  <button 
+                    onClick={() => { setFilterTitle(''); setFilterCompany(''); setFilterMinSalary(''); }} 
+                    className="px-6 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
+                  >
+                    Clear Local Filters
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-12">
+      <footer className="bg-white border-t border-slate-200 py-12 mt-12">
         <div className="max-w-7xl mx-auto px-4 text-center">
           <div className="flex items-center justify-center gap-2 mb-6">
             <div className="bg-slate-900 p-1.5 rounded-md text-white">
@@ -303,16 +413,15 @@ const App: React.FC = () => {
             </span>
           </div>
           <p className="text-slate-400 text-sm max-w-lg mx-auto mb-8">
-            Empowering job seekers with state-of-the-art Gemini AI analysis to find meaningful career opportunities.
+            Empowering global job seekers with high-fidelity Gemini AI analysis to discover career opportunities tailored to their unique professional identity.
           </p>
           <div className="flex justify-center gap-8 text-sm font-medium text-slate-500 mb-8">
-            <a href="#" className="hover:text-indigo-600 transition-all">Terms</a>
-            <a href="#" className="hover:text-indigo-600 transition-all">Privacy</a>
-            <a href="#" className="hover:text-indigo-600 transition-all">Support</a>
-            <a href="#" className="hover:text-indigo-600 transition-all">Contact</a>
+            <a href="#" className="hover:text-indigo-600 transition-all">Terms of Service</a>
+            <a href="#" className="hover:text-indigo-600 transition-all">Privacy Policy</a>
+            <a href="#" className="hover:text-indigo-600 transition-all">Help Center</a>
           </div>
           <p className="text-slate-300 text-xs">
-            © {new Date().getFullYear()} JobMatcher Pro AI. All rights reserved.
+            © {new Date().getFullYear()} JobMatcher Pro AI. Powered by Google Gemini 3.
           </p>
         </div>
       </footer>
