@@ -1,23 +1,66 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
-import { ResumeData, Job, MatchResult, JobPreferences, GroundingSource } from "../types";
+import {
+  ResumeData,
+  Job,
+  MatchResult,
+  JobPreferences,
+  GroundingSource,
+} from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+/**
+ * Converts raw API errors into user-friendly messages.
+ */
+function getFriendlyError(err: any): string {
+  const msg = err?.message || err?.toString() || "";
+
+  if (
+    msg.includes("429") ||
+    msg.includes("RESOURCE_EXHAUSTED") ||
+    msg.includes("quota")
+  ) {
+    return "API rate limit exceeded. The free tier quota has been reached. Please wait a minute or upgrade your Gemini API plan.";
+  }
+  if (msg.includes("403") || msg.includes("PERMISSION_DENIED")) {
+    return "API key is invalid or does not have permission. Please check your API_KEY configuration.";
+  }
+  if (msg.includes("401") || msg.includes("UNAUTHENTICATED")) {
+    return "Authentication failed. Please verify your API key is correct.";
+  }
+  if (msg.includes("500") || msg.includes("INTERNAL")) {
+    return "The AI service encountered an internal error. Please try again in a moment.";
+  }
+  if (
+    msg.includes("network") ||
+    msg.includes("fetch") ||
+    msg.includes("ECONNREFUSED")
+  ) {
+    return "Network error. Please check your internet connection and try again.";
+  }
+
+  return msg;
+}
 
 /**
  * Parses resume data from a base64 encoded file using Gemini 3 Pro.
  * Optimized for diverse layouts (multi-column, headers/footers) and unstructured text.
  */
-export const parseResume = async (fileData: { data: string, mimeType: string }): Promise<ResumeData> => {
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.1-pro-preview',
-    contents: {
-      parts: [
-        {
-          inlineData: fileData
-        },
-        {
-          text: `
+export const parseResume = async (fileData: {
+  data: string;
+  mimeType: string;
+}): Promise<ResumeData> => {
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: "gemini-3.1-pro-preview",
+      contents: {
+        parts: [
+          {
+            inlineData: fileData,
+          },
+          {
+            text: `
             Analyze this resume with high precision. 
             
             Instructions:
@@ -28,51 +71,54 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
             5. Contact Info: Locate email, phone, and name regardless of where they appear on the page.
             
             Return the details in a strictly structured JSON format.
-          `
-        }
-      ]
-    },
-    config: {
-      thinkingConfig: { thinkingBudget: 4096 },
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          fullName: { type: Type.STRING },
-          email: { type: Type.STRING },
-          phone: { type: Type.STRING },
-          summary: { type: Type.STRING },
-          skills: { type: Type.ARRAY, items: { type: Type.STRING } },
-          experience: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                company: { type: Type.STRING },
-                period: { type: Type.STRING },
-                description: { type: Type.STRING }
-              },
-              required: ["title", "company", "period", "description"]
-            }
+          `,
           },
-          education: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                degree: { type: Type.STRING },
-                institution: { type: Type.STRING },
-                year: { type: Type.STRING }
+        ],
+      },
+      config: {
+        thinkingConfig: { thinkingBudget: 4096 },
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            fullName: { type: Type.STRING },
+            email: { type: Type.STRING },
+            phone: { type: Type.STRING },
+            summary: { type: Type.STRING },
+            skills: { type: Type.ARRAY, items: { type: Type.STRING } },
+            experience: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  company: { type: Type.STRING },
+                  period: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                },
+                required: ["title", "company", "period", "description"],
               },
-              required: ["degree", "institution", "year"]
-            }
-          }
+            },
+            education: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  degree: { type: Type.STRING },
+                  institution: { type: Type.STRING },
+                  year: { type: Type.STRING },
+                },
+                required: ["degree", "institution", "year"],
+              },
+            },
+          },
+          required: ["fullName", "skills", "experience"],
         },
-        required: ["fullName", "skills", "experience"]
-      }
-    }
-  });
+      },
+    });
+  } catch (apiError: any) {
+    throw new Error(getFriendlyError(apiError));
+  }
 
   try {
     const text = response.text;
@@ -80,7 +126,9 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
     return JSON.parse(text);
   } catch (e) {
     console.error("Resume Parsing Error:", e);
-    throw new Error("We had trouble accurately parsing your resume. Please ensure the file is clear and try again.");
+    throw new Error(
+      "We had trouble accurately parsing your resume. Please ensure the file is clear and try again.",
+    );
   }
 };
 
@@ -88,12 +136,15 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
  * Searches for real-time job openings using Google Search grounding.
  * Fetches a larger volume of jobs and filters by experience level.
  */
-export const findRealJobs = async (resume: ResumeData, preferences: JobPreferences): Promise<{ jobs: Job[], matches: MatchResult[] }> => {
+export const findRealJobs = async (
+  resume: ResumeData,
+  preferences: JobPreferences,
+): Promise<{ jobs: Job[]; matches: MatchResult[] }> => {
   const dateMap = {
-    '24h': 'past 24 hours',
-    '7d': 'past 7 days',
-    '30d': 'past 30 days',
-    'any': 'any time'
+    "24h": "past 24 hours",
+    "7d": "past 7 days",
+    "30d": "past 30 days",
+    any: "any time",
   };
 
   const searchPrompt = `
@@ -101,10 +152,10 @@ export const findRealJobs = async (resume: ResumeData, preferences: JobPreferenc
 
     Candidate Profile:
     - Summary: ${resume.summary}
-    - Skills: ${resume.skills.join(', ')}
-    - Target Location: ${preferences.location || 'Anywhere'}
-    - Include Remote: ${preferences.includeRemote ? 'Yes' : 'No'}
-    - Posted Within: ${dateMap[preferences.postedWithin] || 'any time'}
+    - Skills: ${resume.skills.join(", ")}
+    - Target Location: ${preferences.location || "Anywhere"}
+    - Include Remote: ${preferences.includeRemote ? "Yes" : "No"}
+    - Posted Within: ${dateMap[preferences.postedWithin] || "any time"}
 
     CRITICAL INSTRUCTIONS FOR REAL LINKS:
     1. Use Google Search to find ACTUAL job postings.
@@ -137,77 +188,99 @@ export const findRealJobs = async (resume: ResumeData, preferences: JobPreferenc
     Return the results as a JSON object with two arrays: 'jobs' and 'matches'.
   `;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.1-pro-preview',
-    contents: searchPrompt,
-    config: {
-      tools: [{ googleSearch: {} }],
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          jobs: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                id: { type: Type.STRING },
-                title: { type: Type.STRING },
-                company: { type: Type.STRING },
-                location: { type: Type.STRING },
-                description: { type: Type.STRING },
-                salaryRange: { type: Type.STRING },
-                postedDate: { type: Type.STRING },
-                applicationUrl: { type: Type.STRING },
-                isRemote: { type: Type.BOOLEAN }
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: "gemini-3.1-pro-preview",
+      contents: searchPrompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            jobs: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  title: { type: Type.STRING },
+                  company: { type: Type.STRING },
+                  location: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  salaryRange: { type: Type.STRING },
+                  postedDate: { type: Type.STRING },
+                  applicationUrl: { type: Type.STRING },
+                  isRemote: { type: Type.BOOLEAN },
+                },
+                required: [
+                  "id",
+                  "title",
+                  "company",
+                  "location",
+                  "applicationUrl",
+                ],
               },
-              required: ["id", "title", "company", "location", "applicationUrl"]
-            }
+            },
+            matches: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  jobId: { type: Type.STRING },
+                  score: { type: Type.NUMBER },
+                  matchingSkills: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                  missingSkills: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                  reasoning: { type: Type.STRING },
+                },
+                required: ["jobId", "score", "reasoning"],
+              },
+            },
           },
-          matches: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                jobId: { type: Type.STRING },
-                score: { type: Type.NUMBER },
-                matchingSkills: { type: Type.ARRAY, items: { type: Type.STRING } },
-                missingSkills: { type: Type.ARRAY, items: { type: Type.STRING } },
-                reasoning: { type: Type.STRING }
-              },
-              required: ["jobId", "score", "reasoning"]
-            }
-          }
-        }
-      }
-    }
-  });
+        },
+      },
+    });
+  } catch (apiError: any) {
+    throw new Error(getFriendlyError(apiError));
+  }
 
   try {
     const data = JSON.parse(response.text || '{"jobs": [], "matches": []}');
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const groundingChunks =
+      response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     const webSources: GroundingSource[] = groundingChunks
-      .filter(chunk => chunk.web)
-      .map(chunk => ({
-        title: chunk.web?.title || 'Job Listing Source',
-        uri: chunk.web?.uri || ''
+      .filter((chunk) => chunk.web)
+      .map((chunk) => ({
+        title: chunk.web?.title || "Job Listing Source",
+        uri: chunk.web?.uri || "",
       }));
 
     // Enhanced processing to ensure links are from grounding sources where possible
     const processedJobs = data.jobs.map((job: Job) => {
       // Find the best matching source from grounding metadata
       let bestLink = job.applicationUrl;
-      
+
       // If the link looks like a placeholder or generic domain, try to find a better one in webSources
-      const isGeneric = !job.applicationUrl.includes('/') || 
-                        job.applicationUrl.endsWith('.com') || 
-                        job.applicationUrl.endsWith('.org') ||
-                        job.applicationUrl.includes('example.com');
+      const isGeneric =
+        !job.applicationUrl.includes("/") ||
+        job.applicationUrl.endsWith(".com") ||
+        job.applicationUrl.endsWith(".org") ||
+        job.applicationUrl.includes("example.com");
 
       if (isGeneric && webSources.length > 0) {
-        const matchingSource = webSources.find(s => 
-          s.title.toLowerCase().includes(job.company.toLowerCase()) ||
-          s.uri.toLowerCase().includes(job.company.toLowerCase().replace(/\s+/g, ''))
+        const matchingSource = webSources.find(
+          (s) =>
+            s.title.toLowerCase().includes(job.company.toLowerCase()) ||
+            s.uri
+              .toLowerCase()
+              .includes(job.company.toLowerCase().replace(/\s+/g, "")),
         );
         if (matchingSource) {
           bestLink = matchingSource.uri;
@@ -217,35 +290,46 @@ export const findRealJobs = async (resume: ResumeData, preferences: JobPreferenc
       return {
         ...job,
         applicationUrl: bestLink,
-        sources: webSources.filter(s => {
-          try {
-            const jobHost = new URL(bestLink).hostname.replace('www.', '');
-            const sourceHost = new URL(s.uri).hostname.replace('www.', '');
-            return jobHost === sourceHost || s.title.toLowerCase().includes(job.company.toLowerCase());
-          } catch {
-            return s.title.toLowerCase().includes(job.company.toLowerCase());
-          }
-        }).slice(0, 3)
+        sources: webSources
+          .filter((s) => {
+            try {
+              const jobHost = new URL(bestLink).hostname.replace("www.", "");
+              const sourceHost = new URL(s.uri).hostname.replace("www.", "");
+              return (
+                jobHost === sourceHost ||
+                s.title.toLowerCase().includes(job.company.toLowerCase())
+              );
+            } catch {
+              return s.title.toLowerCase().includes(job.company.toLowerCase());
+            }
+          })
+          .slice(0, 3),
       };
     });
 
     // Filter out jobs that still have obviously fake or missing links
     const validJobs = processedJobs.filter((job: Job) => {
-      return job.applicationUrl && 
-             job.applicationUrl.startsWith('http') && 
-             !job.applicationUrl.includes('example.com');
+      return (
+        job.applicationUrl &&
+        job.applicationUrl.startsWith("http") &&
+        !job.applicationUrl.includes("example.com")
+      );
     });
 
     // Also filter matches to only include valid jobs
     const validJobIds = new Set(validJobs.map((j: Job) => j.id));
-    const validMatches = data.matches.filter((m: MatchResult) => validJobIds.has(m.jobId));
+    const validMatches = data.matches.filter((m: MatchResult) =>
+      validJobIds.has(m.jobId),
+    );
 
     return {
       jobs: validJobs,
-      matches: validMatches
+      matches: validMatches,
     };
   } catch (e) {
     console.error("JSON Parse Error:", e);
-    throw new Error("Failed to parse job listings from AI search results. Please try adjusting your search terms.");
+    throw new Error(
+      "Failed to parse job listings from AI search results. Please try adjusting your search terms.",
+    );
   }
 };
