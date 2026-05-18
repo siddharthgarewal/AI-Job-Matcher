@@ -148,44 +148,83 @@ export const findRealJobs = async (
   };
 
   const searchPrompt = `
-    Find as many REAL and CURRENT job openings as possible (aim for at least 25-30 results) from major job portals across the web (including LinkedIn, Naukri, Indeed, Glassdoor, Wellfound, Monster, and direct Company Career pages).
+    You are a LinkedIn job search specialist. Search EXCLUSIVELY on LinkedIn for job opportunities. Do NOT use any other platform.
 
-    Candidate Profile:
-    - Summary: ${resume.summary}
-    - Skills: ${resume.skills.join(", ")}
-    - Target Location: ${preferences.location || "Anywhere"}
-    - Include Remote: ${preferences.includeRemote ? "Yes" : "No"}
-    - Posted Within: ${dateMap[preferences.postedWithin] || "any time"}
+    ===== SEARCH STRATEGY =====
+    
+    Perform MULTIPLE Google searches using these exact queries (adapt keywords from the candidate profile below):
 
-    CRITICAL INSTRUCTIONS FOR REAL LINKS:
-    1. Use Google Search to find ACTUAL job postings.
-    2. The 'applicationUrl' MUST be a valid, direct link to the job posting found in the search results. 
-    3. DO NOT hallucinate URLs or provide generic homepage links (like 'https://linkedin.com').
-    4. Ensure the links are CURRENT and not expired.
-    5. If a direct application link is not available, provide the URL of the page where the job was found.
+    BATCH 1 - LinkedIn Job Listings:
+    - site:linkedin.com/jobs/view "${resume.skills.slice(0, 3).join('" OR "')}" ${preferences.location || ""}
+    - site:linkedin.com/jobs "${resume.skills.slice(0, 5).join('" "')}" ${preferences.location || ""}
+    - site:linkedin.com/jobs/view ${resume.experience?.[0]?.title || resume.skills[0]} ${preferences.location || ""}
 
-    CRITICAL EXPERIENCE FILTERING:
-    1. Calculate the candidate's total years of experience based on their work history.
-    2. ONLY include jobs where the required experience is within +/- 2 years of the candidate's experience.
-    3. If a job is entry-level, internship, or does not specify experience, include it.
-    4. EXCLUDE jobs where the candidate is significantly over-qualified or under-qualified.
-    5. Prioritize "Freshness": Only include jobs posted within ${dateMap[preferences.postedWithin]}.
+    BATCH 2 - LinkedIn Recruiter/Hiring Posts:
+    - site:linkedin.com/posts "#hiring" "${resume.skills.slice(0, 2).join('" "')}" ${preferences.location || ""}
+    - site:linkedin.com/posts "we're hiring" OR "we are hiring" OR "join our team" ${resume.skills[0]} ${preferences.location || ""}
+    - site:linkedin.com/posts "looking for" OR "DM me" OR "apply" ${resume.skills.slice(0, 3).join(" OR ")}
+    - site:linkedin.com/feed/update "#hiring" OR "#opentowork" ${resume.skills[0]}
+    - site:linkedin.com/posts "immediate joiner" OR "urgent hiring" OR "open position" ${resume.skills.slice(0, 2).join(" ")}
+
+    BATCH 3 - LinkedIn Company Posts:
+    - site:linkedin.com/posts "hiring" OR "job opening" OR "open role" ${resume.skills.slice(0, 3).join(" ")}
+    - site:linkedin.com/posts "#jobs" OR "#vacancy" OR "#recruitment" ${resume.skills[0]} ${preferences.location || ""}
+
+    ===== CANDIDATE PROFILE =====
+    - Professional Summary: ${resume.summary}
+    - Core Skills: ${resume.skills.join(", ")}
+    - Most Recent Role: ${resume.experience?.[0]?.title || "N/A"} at ${resume.experience?.[0]?.company || "N/A"}
+    - Target Location: ${preferences.location || "Anywhere (open to all locations)"}
+    - Include Remote Roles: ${preferences.includeRemote ? "Yes" : "No"}
+    - Freshness Requirement: Posted within ${dateMap[preferences.postedWithin] || "any time"}
+
+    ===== STRICT RULES =====
+
+    URL VALIDATION (CRITICAL - ZERO TOLERANCE FOR FAKE LINKS):
+    1. EVERY 'applicationUrl' MUST be a real URL found in Google Search results.
+    2. LinkedIn Job format: https://www.linkedin.com/jobs/view/NUMERIC_ID or https://linkedin.com/jobs/view/SLUG-NUMERIC_ID
+    3. LinkedIn Post format: https://www.linkedin.com/posts/USERNAME_SLUG-activityID or https://www.linkedin.com/feed/update/urn:li:activity:NUMERIC_ID
+    4. NEVER fabricate a URL. If you cannot find a real link, SKIP that job entirely.
+    5. NEVER return generic links like "https://linkedin.com" or "https://www.linkedin.com/jobs"
+    6. Each URL must have a specific path with an ID or slug - no bare domain links.
+
+    EXPERIENCE MATCHING:
+    1. Calculate candidate's total years of experience from their work history.
+    2. ONLY include jobs within +/- 2 years of candidate's experience level.
+    3. Include entry-level roles if candidate has < 3 years experience.
+    4. EXCLUDE senior/lead roles if candidate has < 4 years experience.
+    5. EXCLUDE junior roles if candidate has > 6 years experience.
+
+    CONTENT EXTRACTION FROM RECRUITER POSTS:
+    1. Extract the job title being hired for (not the poster's title).
+    2. Extract the company name (the company hiring, not the recruiter's company if different).
+    3. Note the recruiter/poster's name in the description.
+    4. Look for keywords: salary range, experience required, tech stack, location, remote/hybrid/onsite.
+    5. If the post says "DM me" or "comment below", still include the post URL as applicationUrl.
+
+    QUALITY FILTERS:
+    1. Skip posts that are just career advice, not actual job openings.
+    2. Skip reshared posts unless the resharer adds their own hiring context.
+    3. Skip posts older than ${dateMap[preferences.postedWithin]}.
+    4. Prioritize posts with high engagement (comments/likes suggest active hiring).
+
+    ===== OUTPUT FORMAT =====
 
     For each job found, provide:
-    1. id: unique string
-    2. title: string
-    3. company: string
-    4. location: string
-    5. description: short summary
-    6. salaryRange: string (estimate if missing)
-    7. applicationUrl: THE ACTUAL DIRECT LINK FOUND VIA SEARCH
+    1. id: unique string (use "lj-" prefix for LinkedIn Jobs, "lp-" prefix for LinkedIn Posts)
+    2. title: the job title being hired for
+    3. company: the company name
+    4. location: city/state/country or "Remote"
+    5. description: 2-3 sentence summary. For posts, include: "Posted by [Name], [Their Title]." followed by key requirements.
+    6. salaryRange: extract if mentioned, otherwise "Not specified"
+    7. applicationUrl: THE EXACT LinkedIn URL from search results
     8. isRemote: boolean
-    9. score: 0-100 (based on skills AND experience fit)
-    10. reasoning: explain specifically why the skills and EXPERIENCE level match.
-    11. matchingSkills: array of strings
-    12. missingSkills: array of strings
+    9. score: 0-100 match score based on skills + experience alignment
+    10. reasoning: specific explanation of why this matches the candidate
+    11. matchingSkills: array of candidate skills that match the job
+    12. missingSkills: array of skills the job wants that the candidate lacks
 
-    Return the results as a JSON object with two arrays: 'jobs' and 'matches'.
+    Return ONLY a JSON object with two arrays: 'jobs' and 'matches'. Aim for 20-30 results minimum.
   `;
 
   let response;
