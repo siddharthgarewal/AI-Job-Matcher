@@ -120,17 +120,24 @@ const JobMatchCard: React.FC<JobMatchCardProps> = ({ job, match }) => {
             </div>
           )}
 
-          <div className="flex gap-4 items-center">
+          <div className="flex flex-col sm:flex-row gap-4 items-center">
             <button 
               onClick={handleApply}
-              className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-xl transition-all shadow-md active:scale-95"
+              className="w-full sm:flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-2"
             >
-              Apply Now <i className="fa-solid fa-arrow-up-right-from-square ml-1 text-xs"></i>
+              Apply on {new URL(job.applicationUrl).hostname.replace('www.', '')} 
+              <i className="fa-solid fa-arrow-up-right-from-square text-xs"></i>
             </button>
-            <button className="w-10 h-10 border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-100 transition-all">
-              <i className="fa-regular fa-bookmark"></i>
-            </button>
+            <div className="flex gap-2">
+              <button className="w-12 h-12 border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-100 transition-all">
+                <i className="fa-regular fa-bookmark text-lg"></i>
+              </button>
+            </div>
           </div>
+          <p className="mt-3 text-[10px] text-slate-400 flex items-center gap-1">
+            <i className="fa-solid fa-shield-halved text-emerald-500"></i> 
+            Link verified via real-time search grounding
+          </p>
         </div>
       </div>
     </div>

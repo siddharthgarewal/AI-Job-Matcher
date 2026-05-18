@@ -10,7 +10,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
  */
 export const parseResume = async (fileData: { data: string, mimeType: string }): Promise<ResumeData> => {
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3.1-pro-preview',
     contents: {
       parts: [
         {
@@ -33,33 +33,16 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
       ]
     },
     config: {
-      // Use thinking budget to handle complex document reasoning and layout understanding.
       thinkingConfig: { thinkingBudget: 4096 },
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          fullName: { 
-            type: Type.STRING,
-            description: "The candidate's full legal name."
-          },
-          email: { 
-            type: Type.STRING,
-            description: "Primary contact email address."
-          },
-          phone: { 
-            type: Type.STRING,
-            description: "Primary contact phone number."
-          },
-          summary: { 
-            type: Type.STRING,
-            description: "A professional summary or synthesized profile of the candidate."
-          },
-          skills: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: "A comprehensive list of technical, professional, and soft skills."
-          },
+          fullName: { type: Type.STRING },
+          email: { type: Type.STRING },
+          phone: { type: Type.STRING },
+          summary: { type: Type.STRING },
+          skills: { type: Type.ARRAY, items: { type: Type.STRING } },
           experience: {
             type: Type.ARRAY,
             items: {
@@ -71,8 +54,7 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
                 description: { type: Type.STRING }
               },
               required: ["title", "company", "period", "description"]
-            },
-            description: "Chronological list of work experience."
+            }
           },
           education: {
             type: Type.ARRAY,
@@ -84,8 +66,7 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
                 year: { type: Type.STRING }
               },
               required: ["degree", "institution", "year"]
-            },
-            description: "Educational background and degrees earned."
+            }
           }
         },
         required: ["fullName", "skills", "experience"]
@@ -105,6 +86,7 @@ export const parseResume = async (fileData: { data: string, mimeType: string }):
 
 /**
  * Searches for real-time job openings using Google Search grounding.
+ * Fetches a larger volume of jobs and filters by experience level.
  */
 export const findRealJobs = async (resume: ResumeData, preferences: JobPreferences): Promise<{ jobs: Job[], matches: MatchResult[] }> => {
   const dateMap = {
@@ -115,40 +97,48 @@ export const findRealJobs = async (resume: ResumeData, preferences: JobPreferenc
   };
 
   const searchPrompt = `
-    Find 8-12 REAL and CURRENT job openings from major job portals across the web (including LinkedIn, Naukri, Indeed, Glassdoor, Wellfound, Monster, and direct Company Career pages) that match this candidate's profile.
-    
-    Candidate Summary: ${resume.summary}
-    Top Skills: ${resume.skills.join(', ')}
-    Target Location: ${preferences.location || 'Anywhere'}
-    Include Remote: ${preferences.includeRemote ? 'Yes' : 'No'}
-    Posted Within: ${dateMap[preferences.postedWithin] || 'any time'}
+    Find as many REAL and CURRENT job openings as possible (aim for at least 25-30 results) from major job portals across the web (including LinkedIn, Naukri, Indeed, Glassdoor, Wellfound, Monster, and direct Company Career pages).
 
-    Instructions:
-    - Use Google Search to find current listings across ALL reputable job platforms and company websites.
-    - CRITICAL: Only include jobs posted within the requested timeframe: ${dateMap[preferences.postedWithin]}.
-    - Prioritize high-authority portals like LinkedIn, Indeed, Glassdoor, and direct company hiring pages.
-    - If specific location is provided, focus search results on that specific region.
+    Candidate Profile:
+    - Summary: ${resume.summary}
+    - Skills: ${resume.skills.join(', ')}
+    - Target Location: ${preferences.location || 'Anywhere'}
+    - Include Remote: ${preferences.includeRemote ? 'Yes' : 'No'}
+    - Posted Within: ${dateMap[preferences.postedWithin] || 'any time'}
+
+    CRITICAL INSTRUCTIONS FOR REAL LINKS:
+    1. Use Google Search to find ACTUAL job postings.
+    2. The 'applicationUrl' MUST be a valid, direct link to the job posting found in the search results. 
+    3. DO NOT hallucinate URLs or provide generic homepage links (like 'https://linkedin.com').
+    4. Ensure the links are CURRENT and not expired.
+    5. If a direct application link is not available, provide the URL of the page where the job was found.
+
+    CRITICAL EXPERIENCE FILTERING:
+    1. Calculate the candidate's total years of experience based on their work history.
+    2. ONLY include jobs where the required experience is within +/- 2 years of the candidate's experience.
+    3. If a job is entry-level, internship, or does not specify experience, include it.
+    4. EXCLUDE jobs where the candidate is significantly over-qualified or under-qualified.
+    5. Prioritize "Freshness": Only include jobs posted within ${dateMap[preferences.postedWithin]}.
 
     For each job found, provide:
-    1. Title
-    2. Company
-    3. Location
-    4. Short description
-    5. Salary range (estimate if not explicitly mentioned)
-    6. Exact Application/Source URL (must be the direct link to the post or company career page)
-    7. Remote status (boolean)
-    8. A match score (0-100) based on how well the candidate's skills align with the requirements.
-    9. Brief reasoning why it matches.
-    10. Matching skills found in resume.
-    11. Missing skills.
+    1. id: unique string
+    2. title: string
+    3. company: string
+    4. location: string
+    5. description: short summary
+    6. salaryRange: string (estimate if missing)
+    7. applicationUrl: THE ACTUAL DIRECT LINK FOUND VIA SEARCH
+    8. isRemote: boolean
+    9. score: 0-100 (based on skills AND experience fit)
+    10. reasoning: explain specifically why the skills and EXPERIENCE level match.
+    11. matchingSkills: array of strings
+    12. missingSkills: array of strings
 
     Return the results as a JSON object with two arrays: 'jobs' and 'matches'.
-    The 'jobs' objects should have: id, title, company, location, description, salaryRange, postedDate, applicationUrl, isRemote.
-    The 'matches' objects should have: jobId, score, matchingSkills, missingSkills, reasoning.
   `;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3.1-pro-preview',
     contents: searchPrompt,
     config: {
       tools: [{ googleSearch: {} }],
@@ -195,8 +185,6 @@ export const findRealJobs = async (resume: ResumeData, preferences: JobPreferenc
 
   try {
     const data = JSON.parse(response.text || '{"jobs": [], "matches": []}');
-    
-    // Extract grounding sources to satisfy "MUST ALWAYS extract URLs from groundingChunks"
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     const webSources: GroundingSource[] = groundingChunks
       .filter(chunk => chunk.web)
@@ -205,17 +193,56 @@ export const findRealJobs = async (resume: ResumeData, preferences: JobPreferenc
         uri: chunk.web?.uri || ''
       }));
 
-    // Attach sources to the jobs
-    const processedJobs = data.jobs.map((job: Job) => ({
-      ...job,
-      sources: webSources.filter(s => 
-        job.applicationUrl.includes(new URL(s.uri).hostname) || webSources.length < 3
-      )
-    }));
+    // Enhanced processing to ensure links are from grounding sources where possible
+    const processedJobs = data.jobs.map((job: Job) => {
+      // Find the best matching source from grounding metadata
+      let bestLink = job.applicationUrl;
+      
+      // If the link looks like a placeholder or generic domain, try to find a better one in webSources
+      const isGeneric = !job.applicationUrl.includes('/') || 
+                        job.applicationUrl.endsWith('.com') || 
+                        job.applicationUrl.endsWith('.org') ||
+                        job.applicationUrl.includes('example.com');
+
+      if (isGeneric && webSources.length > 0) {
+        const matchingSource = webSources.find(s => 
+          s.title.toLowerCase().includes(job.company.toLowerCase()) ||
+          s.uri.toLowerCase().includes(job.company.toLowerCase().replace(/\s+/g, ''))
+        );
+        if (matchingSource) {
+          bestLink = matchingSource.uri;
+        }
+      }
+
+      return {
+        ...job,
+        applicationUrl: bestLink,
+        sources: webSources.filter(s => {
+          try {
+            const jobHost = new URL(bestLink).hostname.replace('www.', '');
+            const sourceHost = new URL(s.uri).hostname.replace('www.', '');
+            return jobHost === sourceHost || s.title.toLowerCase().includes(job.company.toLowerCase());
+          } catch {
+            return s.title.toLowerCase().includes(job.company.toLowerCase());
+          }
+        }).slice(0, 3)
+      };
+    });
+
+    // Filter out jobs that still have obviously fake or missing links
+    const validJobs = processedJobs.filter((job: Job) => {
+      return job.applicationUrl && 
+             job.applicationUrl.startsWith('http') && 
+             !job.applicationUrl.includes('example.com');
+    });
+
+    // Also filter matches to only include valid jobs
+    const validJobIds = new Set(validJobs.map((j: Job) => j.id));
+    const validMatches = data.matches.filter((m: MatchResult) => validJobIds.has(m.jobId));
 
     return {
-      jobs: processedJobs,
-      matches: data.matches
+      jobs: validJobs,
+      matches: validMatches
     };
   } catch (e) {
     console.error("JSON Parse Error:", e);
